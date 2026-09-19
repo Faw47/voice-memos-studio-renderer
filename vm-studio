@@ -1,0 +1,118 @@
+#!/bin/bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage:
+  vm-studio <input.qta> <output.ogg> <intensity 0...1>
+  vm-studio --lossless <input.qta> <output.m4a> <intensity 0...1>
+
+Default output:
+  Ogg Opus, mono, 48 kHz, 64 kbps VBR
+
+Lossless output:
+  ALAC in M4A
+EOF
+  exit 64
+}
+
+LOSSLESS=0
+if [[ "${1:-}" == "--lossless" ]]; then
+  LOSSLESS=1
+  shift
+fi
+
+[[ $# -eq 3 ]] || usage
+
+INPUT=$1
+OUTPUT=$2
+INTENSITY=$3
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+RENDERER="$SCRIPT_DIR/vm-studio-lossless"
+
+[[ -f "$INPUT" ]] || {
+  echo "ERROR: input not found: $INPUT" >&2
+  exit 66
+}
+
+[[ -x "$RENDERER" ]] || {
+  echo "ERROR: renderer binary not found: $RENDERER" >&2
+  echo "Run 'make' in $SCRIPT_DIR first." >&2
+  exit 69
+}
+
+command -v ffmpeg >/dev/null 2>&1 || {
+  echo "ERROR: ffmpeg is required." >&2
+  exit 69
+}
+
+command -v ffprobe >/dev/null 2>&1 || {
+  echo "ERROR: ffprobe is required." >&2
+  exit 69
+}
+
+mkdir -p "$(dirname -- "$OUTPUT")"
+
+if [[ $LOSSLESS -eq 1 ]]; then
+  [[ "$OUTPUT" == *.m4a ]] || {
+    echo "ERROR: --lossless output must end in .m4a" >&2
+    exit 64
+  }
+
+  "$RENDERER" "$INPUT" "$OUTPUT" "$INTENSITY"
+
+  ffmpeg -v error     -i "$OUTPUT"     -map 0:a:0     -f null -
+
+  echo
+  echo "Verified lossless output:"
+  echo "$OUTPUT"
+  exit 0
+fi
+
+[[ "$OUTPUT" == *.ogg ]] || {
+  echo "ERROR: default Opus output must end in .ogg" >&2
+  exit 64
+}
+
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vm-studio.XXXXXX")"
+PARTIAL_OUTPUT="$TMP_DIR/output.ogg"
+LOSSLESS_RENDER="$TMP_DIR/render.m4a"
+
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT INT TERM
+
+# First render Studio Voice through Apple's spatial-audio path at full quality.
+"$RENDERER" "$INPUT" "$LOSSLESS_RENDER" "$INTENSITY"
+
+# Then make the portable lecture/transcription copy.
+ffmpeg -hide_banner -loglevel error -y   -i "$LOSSLESS_RENDER"   -map 0:a:0   -vn -sn -dn   -ac 1   -ar 48000   -c:a libopus   -b:a 64k   -vbr on   -compression_level 10   -application audio   -map_metadata -1   -f ogg   "$PARTIAL_OUTPUT"
+
+# Content/container verification before replacing the requested destination.
+CODEC="$(ffprobe -v error -select_streams a:0   -show_entries stream=codec_name   -of default=noprint_wrappers=1:nokey=1   "$PARTIAL_OUTPUT")"
+
+RATE="$(ffprobe -v error -select_streams a:0   -show_entries stream=sample_rate   -of default=noprint_wrappers=1:nokey=1   "$PARTIAL_OUTPUT")"
+
+CHANNELS="$(ffprobe -v error -select_streams a:0   -show_entries stream=channels   -of default=noprint_wrappers=1:nokey=1   "$PARTIAL_OUTPUT")"
+
+[[ "$CODEC" == "opus" && "$RATE" == "48000" && "$CHANNELS" == "1" ]] || {
+  echo "ERROR: unexpected output format: codec=$CODEC rate=$RATE channels=$CHANNELS" >&2
+  exit 65
+}
+
+ffmpeg -v error   -i "$PARTIAL_OUTPUT"   -map 0:a:0   -f null -
+
+mv -f "$PARTIAL_OUTPUT" "$OUTPUT"
+
+SIZE="$(stat -f '%z' "$OUTPUT")"
+
+echo
+echo "Rendered and verified:"
+echo "$OUTPUT"
+echo "codec=opus"
+echo "sample_rate=48000"
+echo "channels=1"
+echo "target_bitrate=64000"
+echo "size=$SIZE"
