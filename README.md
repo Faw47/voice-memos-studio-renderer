@@ -101,6 +101,12 @@ A first proof-of-concept path successfully rendered Studio Voice but produced AA
 
 That does **not** make the original recording magically lossless. If the source audio was already compressed, that information is already gone. ALAC simply avoids another lossy encode after Studio Voice processing.
 
+## Correct spatial-track export path
+
+The renderer now follows `CNAssetSpatialAudioInfo`'s export contract: it reads only `defaultSpatialAudioTrack` and uses `assetReaderOutputSettings(for: .stereo)` when constructing `AVAssetReaderAudioMixOutput`.
+
+Earlier revisions passed every audio track in the asset to the mix output. Spatial Voice Memo containers can carry multiple audio representations, so doing that can mix duplicate content together with a delay. Exports produced by those earlier revisions should not be treated as validated masters.
+
 ## Important limitations
 
 - Only recordings compatible with `CNAssetSpatialAudioInfo` are expected to work.
