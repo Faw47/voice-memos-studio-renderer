@@ -1,10 +1,12 @@
 SWIFTC ?= xcrun swiftc
 TARGET := vm-studio-lossless
 SOURCE := vm-studio-lossless.swift
+WRAPPER := vm-studio
 
 .PHONY: all clean
 
-all: $(TARGET)
+all: $(TARGET) $(WRAPPER)
+	chmod +x $(WRAPPER)
 
 $(TARGET): $(SOURCE)
 	$(SWIFTC) \
