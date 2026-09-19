@@ -8,9 +8,6 @@ enum RenderError: Error, CustomStringConvertible {
     case usage
     case cannotAddReaderOutput
     case cannotAddWriterInput
-    case readerStartFailed(String)
-    case writerStartFailed(String)
-    case appendFailed(String)
     case readerFailed(String)
     case writerFailed(String)
 
@@ -19,15 +16,9 @@ enum RenderError: Error, CustomStringConvertible {
         case .usage:
             return "usage: vm-studio-lossless <input.qta> <output.m4a> <intensity 0...1>"
         case .cannotAddReaderOutput:
-            return "Could not add AVAssetReaderAudioMixOutput"
+            return "Could not attach AVAssetReaderAudioMixOutput"
         case .cannotAddWriterInput:
-            return "Could not add AVAssetWriterInput"
-        case .readerStartFailed(let s):
-            return "Reader failed to start: \(s)"
-        case .writerStartFailed(let s):
-            return "Writer failed to start: \(s)"
-        case .appendFailed(let s):
-            return "Writer append failed: \(s)"
+            return "Could not attach AVAssetWriterInput"
         case .readerFailed(let s):
             return "Reader failed: \(s)"
         case .writerFailed(let s):
@@ -82,15 +73,16 @@ struct VMStudioLossless {
             )
 
             mixOutput.audioMix = audioMix
-            mixOutput.alwaysCopiesSampleData = false
 
             guard reader.canAdd(mixOutput) else {
                 throw RenderError.cannotAddReaderOutput
             }
 
-            reader.add(mixOutput)
+            // macOS 27 replacement for reader.add(...) +
+            // mixOutput.copyNextSampleBuffer().
+            let outputProvider = reader.outputProvider(for: mixOutput)
 
-            // Encode that rendered PCM to Apple Lossless.
+            // Encode the rendered PCM to Apple Lossless.
             let writer = try AVAssetWriter(
                 outputURL: destinationURL,
                 fileType: .m4a
@@ -108,76 +100,49 @@ struct VMStudioLossless {
                 outputSettings: alacSettings
             )
 
-            writerInput.expectsMediaDataInRealTime = false
-
             guard writer.canAdd(writerInput) else {
                 throw RenderError.cannotAddWriterInput
             }
 
-            writer.add(writerInput)
+            // macOS 27 replacement for writer.add(...) +
+            // writerInput.append(...).
+            let sampleReceiver = writer.inputReceiver(for: writerInput)
 
-            guard writer.startWriting() else {
-                throw RenderError.writerStartFailed(
-                    writer.error?.localizedDescription ?? "unknown error"
-                )
-            }
-
+            try writer.start()
             writer.startSession(atSourceTime: .zero)
-
-            guard reader.startReading() else {
-                throw RenderError.readerStartFailed(
-                    reader.error?.localizedDescription ?? "unknown error"
-                )
-            }
+            try reader.start()
 
             var sampleCount: UInt64 = 0
 
-            while reader.status == .reading {
-                if writerInput.isReadyForMoreMediaData {
-                    if let sampleBuffer = mixOutput.copyNextSampleBuffer() {
-                        if !writerInput.append(sampleBuffer) {
-                            throw RenderError.appendFailed(
-                                writer.error?.localizedDescription ?? "unknown error"
-                            )
-                        }
+            while let sampleBuffer = try await outputProvider.next() {
+                sampleCount += 1
 
-                        sampleCount += 1
+                if sampleCount % 500 == 0 {
+                    let seconds = CMTimeGetSeconds(sampleBuffer.presentationTimeStamp)
 
-                        if sampleCount % 500 == 0 {
-                            let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-                            let seconds = CMTimeGetSeconds(pts)
-
-                            if seconds.isFinite {
-                                fputs(
-                                    String(
-                                        format: "\rRendered %.1f minutes",
-                                        seconds / 60.0
-                                    ),
-                                    stderr
-                                )
-                                fflush(stderr)
-                            }
-                        }
-                    } else {
-                        break
+                    if seconds.isFinite {
+                        fputs(
+                            String(
+                                format: "\rRendered %.1f minutes",
+                                seconds / 60.0
+                            ),
+                            stderr
+                        )
+                        fflush(stderr)
                     }
-                } else {
-                    usleep(10_000)
                 }
+
+                // Suspends until the writer is ready, then appends.
+                try await sampleReceiver.append(sampleBuffer)
             }
+
+            sampleReceiver.finish()
+            await writer.finishWriting()
 
             if reader.status == .failed {
                 throw RenderError.readerFailed(
                     reader.error?.localizedDescription ?? "unknown error"
                 )
-            }
-
-            writerInput.markAsFinished()
-
-            await withCheckedContinuation { continuation in
-                writer.finishWriting {
-                    continuation.resume()
-                }
             }
 
             guard writer.status == .completed else {
