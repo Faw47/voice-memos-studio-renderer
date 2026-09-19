@@ -1,3 +1,12 @@
+## Regression note: duplicate-track rendering
+
+The original validation only checked container/codec properties, duration, and sample format. Those checks do not detect content-level defects such as a delayed duplicate mixed into the waveform.
+
+The renderer must use `CNAssetSpatialAudioInfo.defaultSpatialAudioTrack` together with `assetReaderOutputSettings(for: .stereo)`. Passing every audio track from the source asset into `AVAssetReaderAudioMixOutput` can mix alternate representations together.
+
+For any build used before source deletion, validation must include an audible spot-check or equivalent content-level regression check in addition to format/decode verification.
+
+
 # Validation
 
 These are measurements from the working proof-of-concept used to validate the renderer.
