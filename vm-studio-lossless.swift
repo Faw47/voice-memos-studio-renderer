@@ -6,7 +6,6 @@ import Darwin
 
 enum RenderError: Error, CustomStringConvertible {
     case usage
-    case noAudioTracks
     case cannotAddReaderOutput
     case cannotAddWriterInput
     case readerFailed(String)
@@ -16,8 +15,6 @@ enum RenderError: Error, CustomStringConvertible {
         switch self {
         case .usage:
             return "usage: vm-studio-lossless <input.qta> <output.m4a> <intensity 0...1>"
-        case .noAudioTracks:
-            return "No audio tracks found"
         case .cannotAddReaderOutput:
             return "Could not attach AVAssetReaderAudioMixOutput"
         case .cannotAddWriterInput:
@@ -51,11 +48,6 @@ struct VMStudioLossless {
 
             let asset = AVURLAsset(url: sourceURL)
 
-            let audioTracks = try await asset.loadTracks(withMediaType: .audio)
-            guard !audioTracks.isEmpty else {
-                throw RenderError.noAudioTracks
-            }
-
             // Apple's Spatial Audio / Studio Voice processing.
             let spatialInfo = try await CNAssetSpatialAudioInfo(asset: asset)
 
@@ -64,22 +56,19 @@ struct VMStudioLossless {
                 renderingStyle: .studio
             )
 
-            // Decode + render the Audio Mix into uncompressed 48 kHz,
-            // stereo, 32-bit floating-point PCM.
+            // CNAssetSpatialAudioInfo's export contract is specific:
+            // use the default Spatial Audio track and the reader settings
+            // supplied for the requested output content type. Passing every
+            // audio track in the asset can mix alternate representations of
+            // the same recording together and produce delayed duplicate audio.
+            let spatialTrack = spatialInfo.defaultSpatialAudioTrack
+            let pcmSettings = spatialInfo.assetReaderOutputSettings(for: .stereo)
+
+            // Decode + render Apple's Audio Mix to stereo LPCM.
             let reader = try AVAssetReader(asset: asset)
 
-            let pcmSettings: [String: Any] = [
-                AVFormatIDKey: kAudioFormatLinearPCM,
-                AVSampleRateKey: 48_000,
-                AVNumberOfChannelsKey: 2,
-                AVLinearPCMBitDepthKey: 32,
-                AVLinearPCMIsFloatKey: true,
-                AVLinearPCMIsBigEndianKey: false,
-                AVLinearPCMIsNonInterleaved: false
-            ]
-
             let mixOutput = AVAssetReaderAudioMixOutput(
-                audioTracks: audioTracks,
+                audioTracks: [spatialTrack],
                 audioSettings: pcmSettings
             )
 
