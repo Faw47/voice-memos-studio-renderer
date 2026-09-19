@@ -1,10 +1,20 @@
 # Voice Memos Studio Renderer
 
-A small macOS command-line tool that renders Apple's **Studio Voice** processing from compatible Voice Memos spatial recordings and writes the result as **Apple Lossless (ALAC)**.
+A macOS command-line tool that renders Apple's **Studio Voice** processing from compatible Voice Memos spatial recordings.
 
-The project came out of reverse-engineering how the macOS Voice Memos app stores and renders Studio Voice. The working renderer itself does **not** patch Voice Memos, attach a debugger to it, or modify its database. It uses Apple system frameworks to build the Studio Voice audio mix, renders that mix to PCM, then writes ALAC.
+The normal output is a compact, transcription-friendly **Ogg Opus** file:
 
-## What it does
+- Opus
+- Ogg container
+- mono
+- 48 kHz
+- 64 kbps VBR
+
+A lossless ALAC/M4A render remains available with `--lossless`.
+
+The project came out of reverse-engineering how the macOS Voice Memos app stores and renders Studio Voice. It does **not** patch Voice Memos, attach a debugger to it, or modify its database.
+
+## Pipeline
 
 ```text
 Voice Memos .qta
@@ -13,28 +23,29 @@ Voice Memos .qta
 CNAssetSpatialAudioInfo
       │
       ▼
+defaultSpatialAudioTrack
+      │
+      ▼
 Studio Voice audio mix
 (effectIntensity 0.0 ... 1.0)
       │
       ▼
-48 kHz / stereo / 32-bit float PCM
+Apple stereo PCM render
+      │
+      ├──────── --lossless ───────► ALAC / M4A
       │
       ▼
-Apple Lossless (ALAC) .m4a
+mono / 48 kHz
+      │
+      ▼
+Opus 64 kbps VBR / Ogg
 ```
-
-Tested output:
-
-- codec: ALAC
-- sample rate: 48 kHz
-- channels: stereo
-- decoded sample format reported by ffprobe: `s32p`
-- `bits_per_raw_sample=32`
 
 ## Requirements
 
 - macOS with the Apple frameworks used by the tool
 - Xcode Command Line Tools / Swift compiler
+- `ffmpeg` and `ffprobe` for the normal Opus workflow
 - a compatible Voice Memos spatial `.qta` recording
 
 The implementation was tested on macOS 27.0. Older macOS releases are currently untested.
@@ -45,36 +56,84 @@ The implementation was tested on macOS 27.0. Older macOS releases are currently 
 make
 ```
 
-Equivalent command:
+This builds the Apple/AVFoundation renderer as:
 
-```bash
-xcrun swiftc \
-  -parse-as-library \
-  vm-studio-lossless.swift \
-  -framework AVFoundation \
-  -framework Cinematic \
-  -framework AudioToolbox \
-  -o vm-studio-lossless
+```text
+vm-studio-lossless
+```
+
+and makes the normal wrapper executable:
+
+```text
+vm-studio
 ```
 
 ## Usage
 
+### Default: compact Ogg Opus
+
 ```bash
-./vm-studio-lossless <input.qta> <output.m4a> <intensity>
+./vm-studio \
+  "recording.qta" \
+  "recording-studio.ogg" \
+  0.25
 ```
 
-`intensity` must be between `0.0` and `1.0`.
+Output profile:
 
-Example:
+```text
+container:    Ogg
+codec:        Opus
+sample rate:  48 kHz
+channels:     mono
+bitrate:      64 kbps VBR
+application:  audio
+```
+
+The wrapper first renders Studio Voice through Apple's spatial-audio path at full quality, then converts that processed result to Opus. Downmixing and compression happen **after** Studio Voice processing.
+
+It verifies that the result is Opus / 48 kHz / mono and performs a full decode test before replacing the requested destination.
+
+### Optional lossless render
 
 ```bash
-./vm-studio-lossless \
+./vm-studio --lossless \
   "recording.qta" \
   "recording-studio.m4a" \
   0.25
 ```
 
-For a Voice Memo whose Studio Voice slider is stored as 25%, use `0.25`.
+This preserves the previous ALAC/M4A output path.
+
+## Why Opus by default?
+
+The original 48 kHz stereo 32-bit ALAC renders were unnecessarily large for lecture and transcription workflows.
+
+In a 13-file lecture batch, converting the rendered files to the default Opus profile reduced total size from:
+
+```text
+6466.40 MB
+```
+
+to:
+
+```text
+214.82 MB
+```
+
+for a **96.68% reduction**, while every output:
+
+- decoded successfully end-to-end
+- reported Opus / 48 kHz / mono
+- stayed within 0.063 seconds of its source duration
+
+The compact Opus files are intended for transcription, normal playback, and long-term lecture storage. Use `--lossless` when a lossless post-effect master is specifically required.
+
+## Correct spatial-track export path
+
+The renderer follows `CNAssetSpatialAudioInfo`'s export contract: it reads only `defaultSpatialAudioTrack` and uses `assetReaderOutputSettings(for: .stereo)` when constructing `AVAssetReaderAudioMixOutput`.
+
+An earlier revision passed every audio track in the asset to the mix output. Spatial Voice Memo containers can carry multiple audio representations, which caused duplicate speech with a fixed delay in affected exports. Those older exports should not be treated as validated masters.
 
 ## Finding Voice Memos recordings
 
@@ -95,29 +154,31 @@ The Voice Memos database in the same area can contain fields such as:
 
 This project does **not** require modifying that database.
 
-## Why ALAC?
+## Validation before deleting a source
 
-A first proof-of-concept path successfully rendered Studio Voice but produced AAC. This version instead asks AVFoundation for rendered PCM and sends that PCM to an `AVAssetWriter` configured for Apple Lossless.
+Do not treat codec, duration, or decode success alone as proof that an export is correct.
 
-That does **not** make the original recording magically lossless. If the source audio was already compressed, that information is already gone. ALAC simply avoids another lossy encode after Studio Voice processing.
+Before deleting a Voice Memo source:
 
-## Correct spatial-track export path
-
-The renderer now follows `CNAssetSpatialAudioInfo`'s export contract: it reads only `defaultSpatialAudioTrack` and uses `assetReaderOutputSettings(for: .stereo)` when constructing `AVAssetReaderAudioMixOutput`.
-
-Earlier revisions passed every audio track in the asset to the mix output. Spatial Voice Memo containers can carry multiple audio representations, so doing that can mix duplicate content together with a delay. Exports produced by those earlier revisions should not be treated as validated masters.
+1. confirm the output exists;
+2. confirm the expected codec/rate/channel layout;
+3. perform a full decode test;
+4. confirm duration is plausible;
+5. spot-listen to beginning, middle, and end;
+6. specifically check for delayed duplicate speech or other content-level defects.
 
 ## Important limitations
 
 - Only recordings compatible with `CNAssetSpatialAudioInfo` are expected to work.
 - Apple can change Voice Memos internals or system-framework behavior in future macOS releases.
 - The `.qta` container is an Apple implementation detail and should not be treated as a stable public interchange format.
-- The tool currently forces output to 48 kHz, stereo, 32-bit floating-point PCM before ALAC encoding.
-- Several AVAssetReader/Writer APIs used by this proof-of-concept are deprecated in the macOS 27 SDK. They still worked in testing, but a future version should migrate to the newer provider/receiver APIs.
+- The default Opus path is lossy. Use `--lossless` when a lossless post-effect render is required.
+- The default wrapper temporarily creates a lossless render before encoding Opus, then deletes the temporary file.
+- The modern branch uses the newer AVFoundation provider/receiver APIs.
 
 ## Reverse-engineering notes
 
-See [docs/reverse-engineering.md](docs/reverse-engineering.md) for the evidence trail and [docs/validation.md](docs/validation.md) for the measured output from the working prototype.
+See [docs/reverse-engineering.md](docs/reverse-engineering.md) for the evidence trail and [docs/validation.md](docs/validation.md) for validation history.
 
 ## Legal / project status
 
