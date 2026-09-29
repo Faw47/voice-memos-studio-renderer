@@ -10,8 +10,10 @@ import sys
 def probe(path):
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", path],
-        check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+        capture_output=True, text=True, stdin=subprocess.DEVNULL,
     )
+    if result.returncode:
+        raise ValueError(f"ffprobe failed for {path}: {result.stderr.strip()}")
     return json.loads(result.stdout)
 
 
@@ -23,6 +25,8 @@ def duration(info):
 
 
 def verify(source, output, mode):
+    if mode not in ("lossless", "opus"):
+        raise ValueError(f"unknown export mode: {mode}")
     original, rendered = probe(source), probe(output)
     source_duration, output_duration = duration(original), duration(rendered)
     # One second permits container/codec padding, but never scales with lecture length.

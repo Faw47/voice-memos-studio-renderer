@@ -56,6 +56,8 @@ The implementation was tested on macOS 27.0. Older macOS releases are currently 
 make
 ```
 
+Compilation uses a temporary binary and replaces the installed renderer only after the compiler succeeds. To force a rebuild after updating, use `make -B`; a failed rebuild preserves the previous binary.
+
 This builds the Apple/AVFoundation renderer as:
 
 ```text
@@ -115,7 +117,7 @@ This produces 48 kHz stereo, 32-bit ALAC in M4A and uses the same staging, durat
 make test
 ```
 
-The wrapper tests run on Linux or macOS with Python 3, FFmpeg, and ffprobe. They use real generated audio and a controlled stand-in for the Apple renderer to exercise successful exports, heredoc safety, failures, interruption, truncated output, and destination collisions. FFmpeg's ALAC encoder supports at most 24 bits, so the fixture's reported ALAC bit depth is simulated as 32; all other audio properties and decoding use real FFmpeg.
+The wrapper tests run on Linux or macOS with Python 3, FFmpeg, and ffprobe. CI exercises both Linux and macOS, including macOS's system Bash. They use real generated audio and a controlled stand-in for the Apple renderer to exercise successful exports, heredoc safety, failures, interruption, damaged or truncated output, and destination collisions. FFmpeg's ALAC encoder supports at most 24 bits, so the fixture's reported ALAC bit depth is simulated as 32; all other audio properties and decoding use real FFmpeg.
 
 These tests do not validate the Apple Studio Voice effect. Build with the intended macOS SDK and test a real spatial recording before using a new build for source-deletion decisions.
 

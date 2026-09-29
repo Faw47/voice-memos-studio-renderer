@@ -6,6 +6,7 @@ import hashlib
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -46,7 +47,20 @@ case "${CORE_MODE:-ok}" in
   short) "$REAL_FFMPEG" -nostdin -v error -i "$FIXTURE" -t 0.25 -c:a alac -sample_fmt s32p "$2" ;;
   empty) : > "$2" ;;
   aac) "$REAL_FFMPEG" -nostdin -v error -i "$FIXTURE" -c:a aac "$2" ;;
+  corrupt) cp "$FIXTURE" "$2"
+    python3 - "$2" <<'PYCORE'
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+data = bytearray(path.read_bytes())
+start = data.index(b"mdat") + 4
+data[start:start + 512] = bytes(512)
+path.write_bytes(data)
+PYCORE
+    ;;
   race) cp "$FIXTURE" "$2"; printf concurrent > "$RACE_DEST" ;;
+  race_directory) cp "$FIXTURE" "$2"; mkdir "$RACE_DEST" ;;
+  race_symlink) cp "$FIXTURE" "$2"; ln -s "$1" "$RACE_DEST" ;;
   signal) cp "$FIXTURE" "$2"; kill -TERM "$PPID" ;;
   *) cp "$FIXTURE" "$2" ;;
 esac
@@ -118,13 +132,43 @@ print(json.dumps(info))
         self.assertTrue(self.output.is_symlink())
 
     def test_source_as_output_unchanged(self):
+        new_source = self.source.with_suffix(".m4a")
+        self.source.rename(new_source)
+        self.source = new_source
         self.output = self.source
-        self.assertNotEqual(self.run_wrapper().returncode, 0)
+        result = self.run_wrapper(lossless=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("destination already exists", result.stderr)
 
     def test_existing_directory_unchanged(self):
         self.output.mkdir(parents=True)
         self.assertNotEqual(self.run_wrapper().returncode, 0)
         self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_relative_output_directory_beginning_with_dash(self):
+        result = subprocess.run(
+            [str(self.repo / "vm-studio"), str(self.source), "-exports/lecture.ogg", "0.25"],
+            cwd=self.directory, env=self.env, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.directory / "-exports/lecture.ogg").is_file())
+
+    def test_relative_input_filename_beginning_with_dash(self):
+        new_source = self.directory / "-memo.qta"
+        self.source.rename(new_source)
+        self.source = new_source
+        result = subprocess.run(
+            [str(self.repo / "vm-studio"), "-memo.qta", str(self.output), "0.25"],
+            cwd=self.directory, env=self.env, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.output.is_file())
+
+    def test_output_symlink_to_source(self):
+        self.output.parent.mkdir()
+        self.output.symlink_to(self.source)
+        self.assertNotEqual(self.run_wrapper().returncode, 0)
+        self.assertEqual(self.output.resolve(), self.source)
 
     def test_invalid_intensities(self):
         for value in ("nan", "inf", "-0.1", "1.1", "garbage"):
@@ -155,6 +199,24 @@ print(json.dumps(info))
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.output.read_text(), "concurrent")
 
+    def test_concurrent_directory_unchanged(self):
+        result = self.run_wrapper(CORE_MODE="race_directory", RACE_DEST=str(self.output))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(self.output.is_dir())
+        self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_concurrent_symlink_unchanged(self):
+        result = self.run_wrapper(CORE_MODE="race_symlink", RACE_DEST=str(self.output))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(self.output.is_symlink())
+        self.assertEqual(self.output.resolve(), self.source)
+
+    def test_damaged_audio_rejected_by_real_decoder(self):
+        result = self.run_wrapper(CORE_MODE="corrupt")
+        self.assert_failed(result)
+        self.assertIn("Verified lossless", result.stdout)
+        self.assertIn("Error", result.stderr)
+
     def test_signal_does_not_publish(self):
         self.assert_failed(self.run_wrapper(CORE_MODE="signal"))
 
@@ -184,12 +246,30 @@ exec "$REAL_FFMPEG" "$@"
         executable.chmod(0o755)
         self.assert_failed(self.run_wrapper(PATH=str(fake_bin) + os.pathsep + self.env["PATH"]))
 
+    def test_final_opus_decode_failure(self):
+        fake_bin = self.directory / "bin"
+        fake_bin.mkdir()
+        executable = fake_bin / "ffmpeg"
+        executable.write_text('''#!/bin/bash
+is_decode=0
+is_opus=0
+for arg in "$@"; do
+  [[ "$arg" != null ]] || is_decode=1
+  [[ "$arg" != */output.ogg ]] || is_opus=1
+done
+if [[ "$is_decode" == 1 && "$is_opus" == 1 ]]; then exit 9; fi
+exec "$REAL_FFMPEG" "$@"
+''')
+        executable.chmod(0o755)
+        result = self.run_wrapper(PATH=str(fake_bin) + os.pathsep + self.env["PATH"])
+        self.assert_failed(result)
+        self.assertIn("Verified opus", result.stdout)
+
     def test_heredoc_stdin_remains_intact(self):
         for lossless in (False, True):
             with self.subTest(lossless=lossless):
                 self.output = self.output.with_suffix(".m4a" if lossless else ".ogg")
                 # shlex.quote protects spaces and literal shell characters in paths.
-                import shlex
                 command = [str(self.repo / "vm-studio")]
                 if lossless:
                     command.append("--lossless")

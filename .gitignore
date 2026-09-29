@@ -3,3 +3,4 @@ vm-studio-lossless
 *.dSYM/
 __pycache__/
 *.pyc
+.vm-studio-lossless.*

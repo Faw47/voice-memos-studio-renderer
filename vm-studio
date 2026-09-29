@@ -55,7 +55,7 @@ python3 "$SCRIPT_DIR/verify-export.py" preflight "$INPUT" "$OUTPUT" "$INTENSITY"
 
 # Make paths absolute so filenames beginning with '-' are not CLI options.
 INPUT="$(cd -- "$(dirname -- "$INPUT")" && pwd)/$(basename -- "$INPUT")"
-mkdir -p "$(dirname -- "$OUTPUT")"
+mkdir -p -- "$(dirname -- "$OUTPUT")"
 OUTPUT="$(cd -- "$(dirname -- "$OUTPUT")" && pwd)/$(basename -- "$OUTPUT")"
 # Stage on the destination filesystem to allow atomic, no-clobber publication.
 TMP_DIR="$(mktemp -d "$(dirname -- "$OUTPUT")/.vm-studio.XXXXXX")"

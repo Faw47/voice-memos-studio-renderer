@@ -91,7 +91,7 @@ struct VMStudioLossless {
                 throw RenderError.cannotAddReaderOutput
             }
 
-            // macOS 27 replacement for reader.add(...) +
+            // Modern AVFoundation replacement for reader.add(...) +
             // mixOutput.copyNextSampleBuffer().
             let outputProvider = reader.outputProvider(for: mixOutput)
 
@@ -117,7 +117,7 @@ struct VMStudioLossless {
                 throw RenderError.cannotAddWriterInput
             }
 
-            // macOS 27 replacement for writer.add(...) +
+            // Modern AVFoundation replacement for writer.add(...) +
             // writerInput.append(...).
             let sampleReceiver = writer.inputReceiver(for: writerInput)
 
