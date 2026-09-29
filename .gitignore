@@ -1,3 +1,5 @@
 vm-studio-lossless
 .DS_Store
 *.dSYM/
+__pycache__/
+*.pyc

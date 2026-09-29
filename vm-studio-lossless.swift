@@ -10,6 +10,8 @@ enum RenderError: Error, CustomStringConvertible {
     case cannotAddWriterInput
     case readerFailed(String)
     case writerFailed(String)
+    case unsafeDestination
+    case emptyRender
 
     var description: String {
         switch self {
@@ -23,6 +25,10 @@ enum RenderError: Error, CustomStringConvertible {
             return "Reader failed: \(s)"
         case .writerFailed(let s):
             return "Writer failed: \(s)"
+        case .unsafeDestination:
+            return "Destination already exists or is the source; nothing was removed"
+        case .emptyRender:
+            return "Reader did not complete a nonempty render"
         }
     }
 }
@@ -44,7 +50,14 @@ struct VMStudioLossless {
                 throw RenderError.usage
             }
 
-            try? FileManager.default.removeItem(at: destinationURL)
+            // Never remove a caller-supplied path, including the original memo.
+            let sourcePath = sourceURL.resolvingSymlinksInPath().standardizedFileURL
+            let destinationPath = destinationURL.resolvingSymlinksInPath().standardizedFileURL
+            guard sourcePath != destinationPath,
+                  !FileManager.default.fileExists(atPath: destinationURL.path),
+                  (try? FileManager.default.destinationOfSymbolicLink(atPath: destinationURL.path)) == nil else {
+                throw RenderError.unsafeDestination
+            }
 
             let asset = AVURLAsset(url: sourceURL)
 
@@ -149,6 +162,10 @@ struct VMStudioLossless {
                 throw RenderError.writerFailed(
                     writer.error?.localizedDescription ?? "unknown error"
                 )
+            }
+
+            guard sampleCount > 0, reader.status == .completed else {
+                throw RenderError.emptyRender
             }
 
             fputs("\n", stderr)
