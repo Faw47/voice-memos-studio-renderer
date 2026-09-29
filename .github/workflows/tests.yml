@@ -1,0 +1,25 @@
+name: Export wrapper regression tests
+on:
+  push:
+  pull_request:
+jobs:
+  wrapper:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - if: runner.os == 'macOS'
+        run: brew list ffmpeg >/dev/null 2>&1 || brew install ffmpeg
+      - run: make test
+      - if: runner.os == 'macOS'
+        name: Compile the Apple renderer
+        run: |
+          xcrun --sdk macosx --show-sdk-version
+          make SWIFTC="xcrun swiftc -target $(uname -m)-apple-macos26.0"
