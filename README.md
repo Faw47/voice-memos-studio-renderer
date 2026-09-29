@@ -45,7 +45,7 @@ Opus 64 kbps VBR / Ogg
 
 - macOS with the Apple frameworks used by the tool
 - Xcode Command Line Tools / Swift compiler
-- `ffmpeg` and `ffprobe` for the normal Opus workflow
+- `ffmpeg`, `ffprobe`, and Python 3 for both verified export modes
 - a compatible Voice Memos spatial `.qta` recording
 
 The implementation was tested on macOS 27.0. Older macOS releases are currently untested.
@@ -55,6 +55,8 @@ The implementation was tested on macOS 27.0. Older macOS releases are currently 
 ```bash
 make
 ```
+
+Compilation uses a temporary binary and replaces the installed renderer only after the compiler succeeds. To force a rebuild after updating, use `make -B`; a failed rebuild preserves the previous binary.
 
 This builds the Apple/AVFoundation renderer as:
 
@@ -92,7 +94,11 @@ application:  audio
 
 The wrapper first renders Studio Voice through Apple's spatial-audio path at full quality, then converts that processed result to Opus. Downmixing and compression happen **after** Studio Voice processing.
 
-It verifies that the result is Opus / 48 kHz / mono and performs a full decode test before replacing the requested destination.
+It verifies the intermediate ALAC render and final Opus file, checks duration against the source, and performs strict full decode tests before publishing the requested destination. FFmpeg cannot consume commands from a caller's stdin or heredoc.
+
+Existing destinations are refused, including symlinks. Both modes stage files in a private temporary directory beside the destination and publish with an atomic hard link that cannot replace another file. A destination created by another process during rendering is also preserved. Filesystems that do not support hard links will fail without publishing an export.
+
+The original recording is never deleted or overwritten. Failed exports are not published. Temporary renders are removed on normal exit, failure, SIGINT, or SIGTERM; SIGKILL or a power failure may leave a `.vm-studio.*` directory.
 
 ### Optional lossless render
 
@@ -103,7 +109,19 @@ It verifies that the result is Opus / 48 kHz / mono and performs a full decode t
   0.25
 ```
 
-This preserves the previous ALAC/M4A output path.
+This produces 48 kHz stereo, 32-bit ALAC in M4A and uses the same staging, duration, full decode, and no-overwrite checks as the default path.
+
+## Automated checks
+
+```bash
+make test
+```
+
+The wrapper tests run on Linux or macOS with Python 3, FFmpeg, and ffprobe. CI exercises both Linux and macOS, including macOS's system Bash. They use real generated audio and a controlled stand-in for the Apple renderer to exercise successful exports, heredoc safety, failures, interruption, damaged or truncated output, and destination collisions. FFmpeg's ALAC encoder supports at most 24 bits, so the fixture's reported ALAC bit depth is simulated as 32; all other audio properties and decoding use real FFmpeg.
+
+The macOS CI job also compiles the actual Swift renderer targeting macOS 26 or later. These tests do not validate the Apple Studio Voice effect. Test a real spatial recording before using a new build for source-deletion decisions.
+
+Duration checks require a positive, finite source duration reported by ffprobe. Both the lossless render and the final Opus duration must be within one second of the source. Missing or inconsistent durations cause a failure rather than a guessed success. This catches truncation but does not establish that the spoken content is correct.
 
 ## Why Opus by default?
 
