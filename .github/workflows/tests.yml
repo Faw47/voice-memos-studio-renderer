@@ -18,3 +18,8 @@ jobs:
       - if: runner.os == 'macOS'
         run: brew list ffmpeg >/dev/null 2>&1 || brew install ffmpeg
       - run: make test
+      - if: runner.os == 'macOS'
+        name: Compile the Apple renderer
+        run: |
+          xcrun --sdk macosx --show-sdk-version
+          make SWIFTC="xcrun swiftc -target $(uname -m)-apple-macos26.0"

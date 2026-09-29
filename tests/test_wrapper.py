@@ -168,7 +168,7 @@ print(json.dumps(info))
         self.output.parent.mkdir()
         self.output.symlink_to(self.source)
         self.assertNotEqual(self.run_wrapper().returncode, 0)
-        self.assertEqual(self.output.resolve(), self.source)
+        self.assertEqual(self.output.resolve(), self.source.resolve())
 
     def test_invalid_intensities(self):
         for value in ("nan", "inf", "-0.1", "1.1", "garbage"):
@@ -209,7 +209,7 @@ print(json.dumps(info))
         result = self.run_wrapper(CORE_MODE="race_symlink", RACE_DEST=str(self.output))
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(self.output.is_symlink())
-        self.assertEqual(self.output.resolve(), self.source)
+        self.assertEqual(self.output.resolve(), self.source.resolve())
 
     def test_damaged_audio_rejected_by_real_decoder(self):
         result = self.run_wrapper(CORE_MODE="corrupt")

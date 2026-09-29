@@ -119,7 +119,7 @@ make test
 
 The wrapper tests run on Linux or macOS with Python 3, FFmpeg, and ffprobe. CI exercises both Linux and macOS, including macOS's system Bash. They use real generated audio and a controlled stand-in for the Apple renderer to exercise successful exports, heredoc safety, failures, interruption, damaged or truncated output, and destination collisions. FFmpeg's ALAC encoder supports at most 24 bits, so the fixture's reported ALAC bit depth is simulated as 32; all other audio properties and decoding use real FFmpeg.
 
-These tests do not validate the Apple Studio Voice effect. Build with the intended macOS SDK and test a real spatial recording before using a new build for source-deletion decisions.
+The macOS CI job also compiles the actual Swift renderer targeting macOS 26 or later. These tests do not validate the Apple Studio Voice effect. Test a real spatial recording before using a new build for source-deletion decisions.
 
 Duration checks require a positive, finite source duration reported by ffprobe. Both the lossless render and the final Opus duration must be within one second of the source. Missing or inconsistent durations cause a failure rather than a guessed success. This catches truncation but does not establish that the spoken content is correct.
 
